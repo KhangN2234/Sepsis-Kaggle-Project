@@ -11,3 +11,4 @@ Todos:
 
 References:
 1. https://arxiv.org/abs/2411.09591 (How to handle missing values in medical dataset)
+2. https://jamanetwork.com/journals/jamanetworkopen/fullarticle/2847396 (Real world model score)
