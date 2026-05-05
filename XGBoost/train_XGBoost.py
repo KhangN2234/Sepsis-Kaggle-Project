@@ -5,8 +5,9 @@ import sys
 
 import pandas as pd
 from sklearn.metrics import accuracy_score, average_precision_score, precision_score, recall_score, roc_auc_score
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, StratifiedShuffleSplit
 from xgboost import XGBClassifier
+from pathlib import Path
 
 # Ensure project root imports work when running this file via XGBoost/train_XGBoost.py
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -23,14 +24,65 @@ from missing_values import prepare_for_xgboost
 
 def load_training_data() -> tuple[pd.DataFrame, pd.Series]:
 	"""Load the engineered training table and separate features from the label."""
-	train_path = "artifacts/train_features.csv"
+	train_path = Path("artifacts") / "train_features.csv"
 	train_df = pd.read_csv(train_path)
 
 	labels = train_df["SepsisLabel"].astype(int)
 	features = train_df.drop(columns=["SepsisLabel", "person_id", "measurement_datetime"])
 	features = prepare_for_xgboost(features, label_column=None, add_indicators=True, add_summary=True)
 
-	return features, labels
+	return train_df, features, labels
+
+
+def split_data_person_aware(
+	df: pd.DataFrame,
+	features: pd.DataFrame,
+	labels: pd.Series,
+	test_size: float = 0.2,
+	val_size: float = 0.2,
+	random_state: int = 42,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, pd.Series]:
+	"""Split data using person-level stratification (no data leakage).
+	
+	Ensures each person appears in only one split (train, val, or test).
+	This matches the methodology used in xgboost_tuning.py.
+	"""
+	if 'person_id' not in df.columns:
+		raise ValueError("DataFrame must contain 'person_id' column for person-aware splitting")
+	
+	# Person-level labels for stratification
+	person_label = df.groupby('person_id')['SepsisLabel'].max()
+	persons = person_label.index.to_numpy()
+	person_labels = person_label.values
+	
+	# Stratified split: persons into train_val and test
+	sss = StratifiedShuffleSplit(n_splits=1, test_size=test_size, random_state=random_state)
+	train_val_idx, test_idx = next(sss.split(persons, person_labels))
+	train_val_persons = persons[train_val_idx]
+	test_persons = persons[test_idx]
+	
+	# Further split train_val into train and val (person-level stratification)
+	remaining = train_val_persons
+	remaining_labels = person_label.loc[remaining].values
+	sss2 = StratifiedShuffleSplit(n_splits=1, test_size=val_size / (1.0 - test_size), random_state=random_state)
+	train_idx, val_idx = next(sss2.split(remaining, remaining_labels))
+	train_persons = remaining[train_idx]
+	val_persons = remaining[val_idx]
+	
+	# Extract feature and label indices for each split
+	train_indices = df[df['person_id'].isin(train_persons)].index
+	val_indices = df[df['person_id'].isin(val_persons)].index
+	test_indices = df[df['person_id'].isin(test_persons)].index
+	
+	X_train = features.loc[train_indices]
+	X_val = features.loc[val_indices]
+	X_test = features.loc[test_indices]
+	
+	y_train = labels.loc[train_indices]
+	y_val = labels.loc[val_indices]
+	y_test = labels.loc[test_indices]
+	
+	return X_train, X_val, X_test, y_train, y_val, y_test
 
 
 def split_data(
@@ -40,7 +92,11 @@ def split_data(
 	val_size: float = 0.2,
 	random_state: int = 42,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, pd.Series]:
-	"""Split data into train, validation, and test sets using stratification."""
+	"""Split data into train, validation, and test sets using stratification.
+	
+	WARNING: This uses sample-level stratification and can cause data leakage
+	(same person in train and test). Use split_data_person_aware() instead.
+	"""
 	X_train_val, X_test, y_train_val, y_test = train_test_split(
 		features,
 		labels,
@@ -107,6 +163,8 @@ def fit_tuned_xgboost(
 	scale_pos_weight = negative_count / positive_count if positive_count > 0 else 1.0
 
 	# Tuned hyperparameters from Phase 1-3 optimization
+	# Note: tree_method, eval_metric are fixed configuration choices (not tuned)
+	# early_stopping_rounds is not used since final model trains on combined train+val
 	model = XGBClassifier(
 		n_estimators=1372,
 		learning_rate=0.016256670876862687,
@@ -117,47 +175,9 @@ def fit_tuned_xgboost(
 		reg_lambda=3.4968153791141336,
 		reg_alpha=0,
 		gamma=5.0,
-		random_state=42,
-		objective="binary:logistic",
-		tree_method="hist",
-		eval_metric="aucpr",
-		early_stopping_rounds=20,
-	)
-
-	model.fit(
-		X_train.to_numpy(),
-		y_train,
-		eval_set=[(X_val.to_numpy(), y_val)],
-		verbose=False,
-	)
-	return model
-
-
-def fit_kfold_tuned_xgboost(
-	X_train: pd.DataFrame,
-	y_train: pd.Series,
-	X_val: pd.DataFrame,
-	y_val: pd.Series,
-) -> XGBClassifier:
-	"""Fit a tuned model with best params from K-fold Bayesian optimization."""
-	positive_count = float(y_train.sum())
-	negative_count = float(len(y_train) - y_train.sum())
-	scale_pos_weight = negative_count / positive_count if positive_count > 0 else 1.0
-
-	# Best params from tuning_results_kfold.json (hardcoded by request)
-	model = XGBClassifier(
-		n_estimators=100,
-		learning_rate=0.01,
-		max_depth=3,
-		min_child_weight=10,
-		gamma=0,
-		subsample=0.9708446311740322,
-		colsample_bytree=0.5,
-		reg_lambda=5,
-		reg_alpha=0,
 		scale_pos_weight=scale_pos_weight,
 		random_state=42,
-		n_jobs=-1,
+		objective="binary:logistic",
 		tree_method="hist",
 		eval_metric="aucpr",
 	)
@@ -176,7 +196,7 @@ def score_model(
 	X: pd.DataFrame,
 	y: pd.Series,
 	split_name: str,
-	threshold: float = 0.15,
+	threshold: float = 0.03,
 ) -> None:
 	"""Print ranking metrics and thresholded classification metrics for a split.
 
@@ -201,10 +221,10 @@ def score_model(
 
 
 def main() -> None:
-	features, labels = load_training_data()
-	X_train, X_val, X_test, y_train, y_val, y_test = split_data(features, labels)
+	df, features, labels = load_training_data()
+	X_train, X_val, X_test, y_train, y_val, y_test = split_data_person_aware(df, features, labels)
 
-	print("Split sizes:")
+	print("Split sizes (person-level stratification):")
 	print(f"- Train: {X_train.shape}")
 	print(f"- Val:   {X_val.shape}")
 	print(f"- Test:  {X_test.shape}")
@@ -228,16 +248,6 @@ def main() -> None:
 	score_model(tuned_model, X_train, y_train, "Train")
 	score_model(tuned_model, X_val, y_val, "Validation")
 	score_model(tuned_model, X_test, y_test, "Test")
-
-	# K-fold tuned model
-	# print("\n" + "="*60)
-	# print("K-FOLD TUNED MODEL")
-	# print("="*60)
-	# kfold_tuned_model = fit_kfold_tuned_xgboost(X_train, y_train, X_val, y_val)
-	# print("\nK-Fold Tuned Scores:")
-	# score_model(kfold_tuned_model, X_train, y_train, "Train")
-	# score_model(kfold_tuned_model, X_val, y_val, "Validation")
-	# score_model(kfold_tuned_model, X_test, y_test, "Test")
 
 
 if __name__ == "__main__":
