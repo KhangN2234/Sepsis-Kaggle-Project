@@ -87,6 +87,45 @@ def fit_xgboost(
 	return model
 
 
+def fit_tuned_xgboost(
+	X_train: pd.DataFrame,
+	y_train: pd.Series,
+	X_val: pd.DataFrame,
+	y_val: pd.Series,
+) -> XGBClassifier:
+	"""Fit a tuned XGBoost classifier with hyperparameters from Bayesian Optimization."""
+	positive_count = float(y_train.sum())
+	negative_count = float(len(y_train) - y_train.sum())
+	scale_pos_weight = negative_count / positive_count if positive_count > 0 else 1.0
+
+	# Tuned hyperparameters from Phase 1-3 optimization
+	model = XGBClassifier(
+		n_estimators=489,
+		learning_rate=0.2998,
+		max_depth=10,
+		subsample=0.7229,
+		colsample_bytree=0.5500,
+		min_child_weight=1,
+		reg_lambda=2.2962,
+		reg_alpha=1.6685,
+		gamma=0.0,
+		scale_pos_weight=scale_pos_weight,
+		random_state=42,
+		n_jobs=-1,
+		tree_method="hist",
+		eval_metric="aucpr",
+		early_stopping_rounds=20,
+	)
+
+	model.fit(
+		X_train.to_numpy(),
+		y_train,
+		eval_set=[(X_val.to_numpy(), y_val)],
+		verbose=False,
+	)
+	return model
+
+
 def score_model(
 	model: XGBClassifier,
 	X: pd.DataFrame,
@@ -125,12 +164,25 @@ def main() -> None:
 	print(f"- Val:   {X_val.shape}")
 	print(f"- Test:  {X_test.shape}")
 
-	model = fit_xgboost(X_train, y_train, X_val, y_val)
+	# Baseline model
+	print("\n" + "="*60)
+	print("BASELINE MODEL (n_estimators=500, lr=0.05, max_depth=5)")
+	print("="*60)
+	baseline_model = fit_xgboost(X_train, y_train, X_val, y_val)
+	print("\nBaseline Scores:")
+	score_model(baseline_model, X_train, y_train, "Train")
+	score_model(baseline_model, X_val, y_val, "Validation")
+	score_model(baseline_model, X_test, y_test, "Test")
 
-	print("\nScores:")
-	score_model(model, X_train, y_train, "Train")
-	score_model(model, X_val, y_val, "Validation")
-	score_model(model, X_test, y_test, "Test")
+	# Tuned model
+	print("\n" + "="*60)
+	print("TUNED MODEL (Bayesian Optimization - Phase 1-3)")
+	print("="*60)
+	tuned_model = fit_tuned_xgboost(X_train, y_train, X_val, y_val)
+	print("\nTuned Scores:")
+	score_model(tuned_model, X_train, y_train, "Train")
+	score_model(tuned_model, X_val, y_val, "Validation")
+	score_model(tuned_model, X_test, y_test, "Test")
 
 
 if __name__ == "__main__":
