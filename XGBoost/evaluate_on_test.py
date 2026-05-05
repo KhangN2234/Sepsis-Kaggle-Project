@@ -37,7 +37,7 @@ warnings.filterwarnings('ignore')
 # ============================================================================
 # UPDATE THIS THRESHOLD BASED ON find_threshold.py RESULTS
 # ============================================================================
-final_threshold = 0.06  # Change this to your chosen threshold (e.g., 0.25, 0.30, etc.)
+final_threshold = 0.2  # Change this to your chosen threshold (e.g., 0.25, 0.30, etc.)
 # ============================================================================
 
 
@@ -78,14 +78,12 @@ def evaluate_test_set(model_path, X_test, y_test, threshold):
     """Load model and compute final metrics on test set."""
     
     # Load model
-    print(f"\nLoading tuned model from {model_path}...")
     model = joblib_load(model_path)
     
     print(f"Test set shape: X {X_test.shape}, y {y_test.shape}")
     print(f"Test positive class prevalence: {y_test.mean():.4f} ({y_test.sum()} cases)\n")
     
     # Generate predictions
-    print(f"Generating predictions...")
     y_pred_proba = model.predict_proba(X_test.to_numpy())[:, 1]
     y_pred = (y_pred_proba >= threshold).astype(int)
     
@@ -156,7 +154,6 @@ def evaluate_test_set(model_path, X_test, y_test, threshold):
     import json
     with open(results_path, 'w') as f:
         json.dump(results, f, indent=2)
-    print(f"\nResults saved to {results_path}")
     
     print(f"\n{'='*70}")
     print("CLINICAL INTERPRETATION")
@@ -187,9 +184,7 @@ def main():
         return
     
     try:
-        print("Loading test data from artifacts/train_features.csv...")
         X_test, y_test = load_test_split()
-        print(f"Test set loaded: {X_test.shape[0]} samples")
     except Exception as e:
         print(f"Error loading test data: {e}")
         print("\nMake sure artifacts/train_features.csv exists and has 'person_id' and 'SepsisLabel' columns.")

@@ -128,19 +128,7 @@ def fit_xgboost(
 	negative_count = float(len(y_train) - y_train.sum())
 	scale_pos_weight = negative_count / positive_count if positive_count > 0 else 1.0
 
-	model = XGBClassifier(
-		n_estimators=500,
-		learning_rate=0.05,
-		max_depth=5,
-		subsample=0.8,
-		colsample_bytree=0.8,
-		min_child_weight=1,
-		scale_pos_weight=scale_pos_weight,
-		random_state=42,
-		n_jobs=-1,
-		tree_method="hist",
-		eval_metric="aucpr",
-	)
+	model = XGBClassifier()
 
 	model.fit(
 		X_train.to_numpy(),
@@ -196,7 +184,7 @@ def score_model(
 	X: pd.DataFrame,
 	y: pd.Series,
 	split_name: str,
-	threshold: float = 0.03,
+	threshold: float = 0.2,
 ) -> None:
 	"""Print ranking metrics and thresholded classification metrics for a split.
 
@@ -230,14 +218,14 @@ def main() -> None:
 	print(f"- Test:  {X_test.shape}")
 
 	# Baseline model
-	print("\n" + "="*60)
-	print("BASELINE MODEL (n_estimators=500, lr=0.05, max_depth=5)")
-	print("="*60)
-	baseline_model = fit_xgboost(X_train, y_train, X_val, y_val)
-	print("\nBaseline Scores:")
-	score_model(baseline_model, X_train, y_train, "Train")
-	score_model(baseline_model, X_val, y_val, "Validation")
-	score_model(baseline_model, X_test, y_test, "Test")
+	# print("\n" + "="*60)
+	# print("BASELINE MODEL (n_estimators=500, lr=0.05, max_depth=5)")
+	# print("="*60)
+	# baseline_model = fit_xgboost(X_train, y_train, X_val, y_val)
+	# print("\nBaseline Scores:")
+	# score_model(baseline_model, X_train, y_train, "Train")
+	# score_model(baseline_model, X_val, y_val, "Validation")
+	# score_model(baseline_model, X_test, y_test, "Test")
 
 	# Tuned model
 	print("\n" + "="*60)
