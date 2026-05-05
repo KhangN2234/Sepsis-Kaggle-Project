@@ -1,23 +1,137 @@
+from __future__ import annotations
+
 import pandas as pd
+from sklearn.metrics import accuracy_score, average_precision_score, precision_score, recall_score, roc_auc_score
+from sklearn.model_selection import train_test_split
+from xgboost import XGBClassifier
+
 import data_prep
 from missing_values import prepare_for_xgboost
 
-# Combine all csv file into one big one. Uncomment if running for the first time
-#data_prep.main()
 
-# Load the train feature table
-train_path = "artifacts/train_features.csv"
-train_df = pd.read_csv(train_path)
-
-# Handle missing values. Uncomment if running for the first time.
-# Note: Certained missing values are turned into actual features because it makes
-#       the model learns split directions better according to ChatGPT 
-#       so that's why we have so many columns.
-
-#train_df = prepare_for_xgboost(train_df, label_column="SepsisLabel", add_indicators=True, add_summary=True)
+# Combine all csv files into one big table. Uncomment if running for the first time.
+# data_prep.main()
 
 
-print("First 5 instances of train_features.csv:")
-print(train_df)
-print(f"\nShape: {train_df.shape}")
-print(f"\nColumns: {train_df.columns.tolist()}")
+def load_training_data() -> tuple[pd.DataFrame, pd.Series]:
+	"""Load the engineered training table and separate features from the label."""
+	train_path = "artifacts/train_features.csv"
+	train_df = pd.read_csv(train_path)
+
+	labels = train_df["SepsisLabel"].astype(int)
+	features = train_df.drop(columns=["SepsisLabel", "person_id", "measurement_datetime"])
+	features = prepare_for_xgboost(features, label_column=None, add_indicators=True, add_summary=True)
+
+	return features, labels
+
+
+def split_data(
+	features: pd.DataFrame,
+	labels: pd.Series,
+	test_size: float = 0.2,
+	val_size: float = 0.2,
+	random_state: int = 42,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, pd.Series]:
+	"""Split data into train, validation, and test sets using stratification."""
+	X_train_val, X_test, y_train_val, y_test = train_test_split(
+		features,
+		labels,
+		test_size=test_size,
+		stratify=labels,
+		random_state=random_state,
+	)
+
+	val_fraction_of_train_val = val_size / (1.0 - test_size)
+	X_train, X_val, y_train, y_val = train_test_split(
+		X_train_val,
+		y_train_val,
+		test_size=val_fraction_of_train_val,
+		stratify=y_train_val,
+		random_state=random_state,
+	)
+
+	return X_train, X_val, X_test, y_train, y_val, y_test
+
+
+def fit_xgboost(
+	X_train: pd.DataFrame,
+	y_train: pd.Series,
+	X_val: pd.DataFrame,
+	y_val: pd.Series,
+) -> XGBClassifier:
+	"""Fit an XGBoost classifier and use validation data for early stopping."""
+	positive_count = float(y_train.sum())
+	negative_count = float(len(y_train) - y_train.sum())
+	scale_pos_weight = negative_count / positive_count if positive_count > 0 else 1.0
+
+	model = XGBClassifier(
+		n_estimators=500,
+		learning_rate=0.05,
+		max_depth=5,
+		subsample=0.8,
+		colsample_bytree=0.8,
+		min_child_weight=1,
+		scale_pos_weight=scale_pos_weight,
+		random_state=42,
+		n_jobs=-1,
+		tree_method="hist",
+		eval_metric="aucpr",
+	)
+
+	model.fit(
+		X_train.to_numpy(),
+		y_train,
+		eval_set=[(X_val.to_numpy(), y_val)],
+		verbose=False,
+	)
+	return model
+
+
+def score_model(
+	model: XGBClassifier,
+	X: pd.DataFrame,
+	y: pd.Series,
+	split_name: str,
+	threshold: float = 0.5,
+) -> None:
+	"""Print ranking metrics and thresholded classification metrics for a split.
+
+	Accuracy is usually less informative for sepsis because the classes are imbalanced,
+	but it is still reported here for completeness. Recall and precision are more useful
+	for understanding false negatives and false positives at the chosen threshold.
+	"""
+	probas = model.predict_proba(X.to_numpy())[:, 1]
+	predictions = (probas >= threshold).astype(int)
+
+	roc_auc = roc_auc_score(y, probas)
+	pr_auc = average_precision_score(y, probas)
+	accuracy = accuracy_score(y, predictions)
+	recall = recall_score(y, predictions, zero_division=0)
+	precision = precision_score(y, predictions, zero_division=0)
+
+	print(f"{split_name} ROC AUC:   {roc_auc:.4f}")
+	print(f"{split_name} PR AUC:    {pr_auc:.4f}")
+	print(f"{split_name} Accuracy:  {accuracy:.4f} @ threshold={threshold:.2f}")
+	print(f"{split_name} Recall:    {recall:.4f} @ threshold={threshold:.2f}")
+	print(f"{split_name} Precision: {precision:.4f} @ threshold={threshold:.2f}")
+
+
+def main() -> None:
+	features, labels = load_training_data()
+	X_train, X_val, X_test, y_train, y_val, y_test = split_data(features, labels)
+
+	print("Split sizes:")
+	print(f"- Train: {X_train.shape}")
+	print(f"- Val:   {X_val.shape}")
+	print(f"- Test:  {X_test.shape}")
+
+	model = fit_xgboost(X_train, y_train, X_val, y_val)
+
+	print("\nScores:")
+	score_model(model, X_train, y_train, "Train")
+	score_model(model, X_val, y_val, "Validation")
+	score_model(model, X_test, y_test, "Test")
+
+
+if __name__ == "__main__":
+	main()
