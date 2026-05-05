@@ -11,9 +11,14 @@ Workflow:
 4. Run this script to get final test metrics
 """
 
+import sys
+from pathlib import Path
+project_root = Path(__file__).resolve().parents[1]
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
 import pandas as pd
 import numpy as np
-from pathlib import Path
 from joblib import load as joblib_load
 from sklearn.metrics import (
     confusion_matrix,
@@ -24,36 +29,64 @@ from sklearn.metrics import (
     precision_score,
     f1_score,
 )
+from sklearn.model_selection import StratifiedShuffleSplit
+from missing_values import prepare_for_xgboost
 import warnings
 warnings.filterwarnings('ignore')
 
 # ============================================================================
 # UPDATE THIS THRESHOLD BASED ON find_threshold.py RESULTS
 # ============================================================================
-final_threshold = 0.5  # Change this to your chosen threshold (e.g., 0.25, 0.30, etc.)
+final_threshold = 0.06  # Change this to your chosen threshold (e.g., 0.25, 0.30, etc.)
 # ============================================================================
 
 
-def evaluate_test_set(model_path, test_features_path, test_labels_path, threshold):
-    """Load model, test data, and compute final metrics."""
+def load_test_split(test_size=0.2, random_state=42):
+    """Load and extract test set using the same stratification as xgboost_tuning.py.
+    
+    Returns: (X_test, y_test) after preprocessing
+    """
+    path = Path('artifacts') / 'train_features.csv'
+    df = pd.read_csv(path)
+
+    if 'person_id' not in df.columns or 'SepsisLabel' not in df.columns:
+        raise RuntimeError('person_id and SepsisLabel columns required')
+
+    # Person-level stratification (same as tuning script)
+    person_label = df.groupby('person_id')['SepsisLabel'].max()
+    persons = person_label.index.to_numpy()
+    person_labels = person_label.values
+
+    # Extract test split (using same random seed as tuning script)
+    sss = StratifiedShuffleSplit(n_splits=1, test_size=test_size, random_state=random_state)
+    train_val_idx, test_idx = next(sss.split(persons, person_labels))
+    test_persons = persons[test_idx]
+
+    test_df = df[df['person_id'].isin(test_persons)].copy()
+
+    # Prepare features (drop person_id, measurement_datetime, SepsisLabel)
+    y_test = test_df['SepsisLabel'].astype(int)
+    X_test = test_df.drop(columns=['SepsisLabel', 'measurement_datetime', 'person_id'])
+    
+    # Apply preprocessing (same as tuning script)
+    X_test = prepare_for_xgboost(X_test, label_column=None, add_indicators=True, add_summary=True)
+
+    return X_test, y_test
+
+
+def evaluate_test_set(model_path, X_test, y_test, threshold):
+    """Load model and compute final metrics on test set."""
     
     # Load model
     print(f"\nLoading tuned model from {model_path}...")
     model = joblib_load(model_path)
-    
-    # Load test data
-    print(f"Loading test features from {test_features_path}...")
-    X_test = pd.read_csv(test_features_path)
-    
-    print(f"Loading test labels from {test_labels_path}...")
-    y_test = pd.read_csv(test_labels_path).iloc[:, 0].astype(int).values
     
     print(f"Test set shape: X {X_test.shape}, y {y_test.shape}")
     print(f"Test positive class prevalence: {y_test.mean():.4f} ({y_test.sum()} cases)\n")
     
     # Generate predictions
     print(f"Generating predictions...")
-    y_pred_proba = model.predict_proba(X_test)[:, 1]
+    y_pred_proba = model.predict_proba(X_test.to_numpy())[:, 1]
     y_pred = (y_pred_proba >= threshold).astype(int)
     
     # Compute metrics
@@ -148,45 +181,22 @@ def main():
     
     model_path = Path('tuning_results') / 'final_model.pkl'
     
-    # Attempt to find test data paths
-    # These are inferred from the typical project structure
-    test_features_candidates = [
-        Path('artifacts') / 'test_features.csv',
-        Path('artifacts') / 'X_test.csv',
-    ]
-    test_labels_candidates = [
-        Path('artifacts') / 'test_labels.csv',
-        Path('artifacts') / 'y_test.csv',
-    ]
-    
-    test_features_path = None
-    for path in test_features_candidates:
-        if path.exists():
-            test_features_path = path
-            break
-    
-    test_labels_path = None
-    for path in test_labels_candidates:
-        if path.exists():
-            test_labels_path = path
-            break
-    
     if not model_path.exists():
         print(f"Error: Model not found at {model_path}")
         print("Please run XGBoost/xgboost_tuning.py first.")
         return
     
-    if test_features_path is None or test_labels_path is None:
-        print("\nWarning: Could not find test data files in artifacts/")
-        print("Please provide test data paths in the code.")
-        print("\nTo fix this, update test_features_path and test_labels_path in this script.")
-        print("Or place test data at:")
-        print("  - artifacts/test_features.csv")
-        print("  - artifacts/test_labels.csv")
+    try:
+        print("Loading test data from artifacts/train_features.csv...")
+        X_test, y_test = load_test_split()
+        print(f"Test set loaded: {X_test.shape[0]} samples")
+    except Exception as e:
+        print(f"Error loading test data: {e}")
+        print("\nMake sure artifacts/train_features.csv exists and has 'person_id' and 'SepsisLabel' columns.")
         return
     
     # Run evaluation
-    evaluate_test_set(model_path, test_features_path, test_labels_path, final_threshold)
+    evaluate_test_set(model_path, X_test, y_test, final_threshold)
 
 
 if __name__ == '__main__':

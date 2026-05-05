@@ -108,18 +108,17 @@ def fit_tuned_xgboost(
 
 	# Tuned hyperparameters from Phase 1-3 optimization
 	model = XGBClassifier(
-		n_estimators=489,
-		learning_rate=0.2998,
-		max_depth=10,
-		subsample=0.7229,
-		colsample_bytree=0.5500,
-		min_child_weight=1,
-		reg_lambda=2.2962,
-		reg_alpha=1.6685,
-		gamma=0.0,
-		scale_pos_weight=scale_pos_weight,
+		n_estimators=1372,
+		learning_rate=0.016256670876862687,
+		max_depth=3,
+		subsample=0.5,
+		colsample_bytree=1,
+		min_child_weight=10,
+		reg_lambda=3.4968153791141336,
+		reg_alpha=0,
+		gamma=5.0,
 		random_state=42,
-		n_jobs=-1,
+		objective="binary:logistic",
 		tree_method="hist",
 		eval_metric="aucpr",
 		early_stopping_rounds=20,
@@ -231,14 +230,14 @@ def main() -> None:
 	score_model(tuned_model, X_test, y_test, "Test")
 
 	# K-fold tuned model
-	print("\n" + "="*60)
-	print("K-FOLD TUNED MODEL")
-	print("="*60)
-	kfold_tuned_model = fit_kfold_tuned_xgboost(X_train, y_train, X_val, y_val)
-	print("\nK-Fold Tuned Scores:")
-	score_model(kfold_tuned_model, X_train, y_train, "Train")
-	score_model(kfold_tuned_model, X_val, y_val, "Validation")
-	score_model(kfold_tuned_model, X_test, y_test, "Test")
+	# print("\n" + "="*60)
+	# print("K-FOLD TUNED MODEL")
+	# print("="*60)
+	# kfold_tuned_model = fit_kfold_tuned_xgboost(X_train, y_train, X_val, y_val)
+	# print("\nK-Fold Tuned Scores:")
+	# score_model(kfold_tuned_model, X_train, y_train, "Train")
+	# score_model(kfold_tuned_model, X_val, y_val, "Validation")
+	# score_model(kfold_tuned_model, X_test, y_test, "Test")
 
 
 if __name__ == "__main__":
