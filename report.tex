@@ -1,0 +1,179 @@
+\documentclass{article}
+
+% if you need to pass options to natbib, use, e.g.:
+%     \PassOptionsToPackage{numbers, compress}{natbib}
+% before loading neurips_2019
+
+% ready for submission
+% \usepackage{neurips_2019}
+
+% to compile a preprint version, e.g., for submission to arXiv, add add the
+% [preprint] option:
+%     \usepackage[preprint]{neurips_2019}
+
+% to compile a camera-ready version, add the [final] option, e.g.:
+\usepackage[final]{neurips_2019}
+
+% to avoid loading the natbib package, add option nonatbib:
+%     \usepackage[nonatbib]{neurips_2019}
+
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+\usepackage{graphicx}
+
+\usepackage{geometry}
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Change this to add your title
+\title{Early Sepsis Detection Project Report}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% The \author macro works with any number of authors. There are two commands
+% used to separate the names and addresses of multiple authors: \And and \AND.
+%
+% Using \And between authors leaves it to LaTeX to determine where to break the
+% lines. Using \AND forces a line break at that point. So, if LaTeX puts 3 of 4
+% authors names on the first line, and the last on the second line, try using
+% \AND instead of \And before the third author name.
+
+\author{%
+  Khang Ngo\\
+  \texttt{vkw19@txstate.edu} \\
+  % examples of more authors
+  \And
+  Luke Grimes \\
+  \texttt{name2@txstate.edu} \\
+  % \And
+  % Coauthor \\
+  % \texttt{email} 
+}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\begin{document}
+
+% This adds the TXST logo and affiliation to the document. 
+\noindent\begin{minipage}{0.15\textwidth}% adapt widths of minipages to your needs
+\includegraphics[width=2.0cm]{images/txst-black.jpg}
+\end{minipage}%
+\hfill%
+\begin{minipage}{1\textwidth}\raggedright
+Department of Computer Science\\
+Texas State University\\
+\end{minipage}
+
+
+\maketitle
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{abstract}
+  Early detection of sepsis is vital in making sure that the mortality rate of children in the
+  Pediatric Intensive Care Unit is reduced. Every hour that care is delay is associated with
+  a 4-8 percent rise in mortality rate. The dataset came from the 
+  registry of pediatric patients from the Pediatric Intensive Care Unit of Hospital Sant Joan de Déu.
+  We used a decision tree ensemble model using sequential gradient boosting called XGBoost
+  in order to predict the probability of sepsis 6 hours before clinical predictions. Our model
+  achieved an average AUPRC score of 0.3077, AUROC score of 0.9591, a recall of 0.9209, and a false positive rate of 10.5\%.
+
+\end{abstract}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\section{Introduction}
+Sepsis in children is the leading cause of death in the PICU, particularly among children 
+under the age of 5. Sepsis is a condition that develops when the body fail to respond
+to infections in the body, leading to organ failure, and ultimately death. Early detection
+of sepsis is most often missed, leading to longer hospital stays.
+
+The purpose of this model is to provide healthcare professionals with an early warning
+system, similar to that of a mamogram, to better increase the chance of survival for children.
+It will give them a probability of how confident it is that the patient is under the risk of developing
+sepsis. There already exist more accurate methods of providing clinical predictions. However,
+our model aims to predict this 6 hours before traditional clinical predictions. 
+
+Traditional clinical predictions uses the Phoenix Score to evaluate the potential for sepsis.
+A score of >= 2 is sepsis. It is a clinical scoring system that 
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Methodology}
+This project used a supervised binary classification pipeline to predict pediatric sepsis at the patient-hour level from the PHEMS Hackathon data. The raw clinical tables were consolidated into a single hourly feature table and transformed into a model-ready matrix. The final engineered training table contained 198{,}331 examples and 258 predictive columns after preprocessing.
+
+\subsection{Data preparation}
+The source data were organized by \texttt{person\_id} and \texttt{measurement\_datetime}. To preserve the temporal structure of the problem while preventing leakage, the data were split at the patient level rather than at the row level. Each patient was assigned a binary label based on whether sepsis occurred at any time during the admission. This label was then used to stratify the train, validation, and test partitions so that all measurements from a given patient remained in a single split.
+
+Missing and infinite values were handled using a deterministic preprocessing module rather than imputation. The preprocessing step replaced infinite values with \texttt{NaN}, preserved missing values for XGBoost's native split handling, and added binary missingness indicators together with row-level missingness summary features. These transformations were applied independently to each split after the patient-level partitioning, which avoided information leakage from the validation or test data into the training process.
+
+\subsection{Modeling approach}
+The main model was an XGBoost classifier trained for binary probabilistic prediction. The hyperparameter search was performed in three phases using Bayesian optimization with a Gaussian-process surrogate model. The objective during tuning was threshold-independent precision-recall area under the curve (PR-AUC), which is more informative than accuracy for the highly imbalanced sepsis classification problem.
+
+The search procedure was designed to separate model selection from threshold selection. Tree depth, child weight, and split gain were tuned first; regularization and subsampling parameters were tuned second; and learning rate together with the number of boosting rounds were tuned third. Each candidate configuration was evaluated with inner cross-validation using patient-aware folds. The final model was then retrained on the combined training and validation partitions and evaluated once on the held-out test set.
+
+\subsection{Threshold selection}
+Because a decision threshold is a clinical operating choice rather than a model-fitting parameter, the probability threshold was selected after training using validation-set predictions. A threshold sweep was conducted to examine the trade-off between sensitivity, specificity, precision, false negative rate, and false positive rate. A threshold of 0.20 was selected for the final test evaluation because it provided a clinically acceptable balance between missed cases and false alarms.
+
+\subsection{Evaluation protocol}
+Model performance was assessed with both threshold-independent and threshold-dependent metrics. Threshold-independent evaluation used ROC-AUC and PR-AUC. Threshold-dependent evaluation used sensitivity, specificity, precision, negative predictive value, F1-score, false negative rate, and false positive rate. This combination of metrics is appropriate for sepsis prediction because the dataset is highly imbalanced and the cost of missed positives is much higher than the cost of false alarms.
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Results}
+The final tuned model produced substantially stronger ranking performance than the baseline model on the held-out patient-level test set. The main results are summarized in Table~\ref{tab:final-metrics}. The model achieved a ROC-AUC of 0.9591 and a PR-AUC of 0.3077, indicating strong discrimination under severe class imbalance. At the selected threshold of 0.20, the model attained a sensitivity of 92.09\% and a specificity of 89.48\%, with an FNR of 7.91\% and an FPR of 10.52\%.
+
+\begin{table}[t]
+  \caption{Final test-set performance of the tuned XGBoost model at threshold 0.20.}
+  \label{tab:final-metrics}
+  \centering
+  \begin{tabular}{lr}
+    \toprule
+    Metric & Value \\
+    \midrule
+    ROC-AUC & 0.9591 \\
+    PR-AUC & 0.3077 \\
+    Sensitivity (Recall) & 0.9209 \\
+    Specificity & 0.8948 \\
+    Precision & 0.1192 \\
+    Negative predictive value & 0.9986 \\
+    F1-score & 0.2110 \\
+    False negative rate & 0.0791 \\
+    False positive rate & 0.1052 \\
+    True positives & 897 \\
+    False positives & 6630 \\
+    False negatives & 77 \\
+    True negatives & 56374 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+These results indicate that the final model was effective at identifying sepsis cases while maintaining a moderate false-alarm burden. Out of 974 sepsis-positive test examples, the model detected 897 and missed 77. Out of 63{,}004 non-sepsis examples, 56{,}374 were correctly classified as negative. The relatively high negative predictive value suggests that a negative prediction is highly reliable, while the modest precision reflects the inherent difficulty of the task under strong class imbalance.
+
+The final model behavior is consistent with the broader design of the pipeline. The tuning procedure prioritized PR-AUC rather than a fixed decision threshold, and the threshold was selected separately on validation data to reflect the clinical trade-off between missed cases and unnecessary alerts. In practical terms, this produced a model that ranks patients well and can be calibrated to the operating point required by the deployment setting.
+
+
+
+
+\section{Conclusion}
+Summarize the main findings and their significance, and conclude with any final thoughts or recommendations for future work.
+
+
+\medskip
+
+\small
+\bibliographystyle{plain}
+\bibliography{references}
+
+% Uncomment if using an appendix
+% \appendix
+% \section{Appendix Title 1}
+
+\end{document}
