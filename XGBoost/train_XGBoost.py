@@ -8,6 +8,7 @@ from sklearn.metrics import accuracy_score, average_precision_score, precision_s
 from sklearn.model_selection import train_test_split, StratifiedShuffleSplit
 from xgboost import XGBClassifier
 from pathlib import Path
+from joblib import load as joblib_load
 
 # Ensure project root imports work when running this file via XGBoost/train_XGBoost.py
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -85,38 +86,6 @@ def split_data_person_aware(
 	return X_train, X_val, X_test, y_train, y_val, y_test
 
 
-def split_data(
-	features: pd.DataFrame,
-	labels: pd.Series,
-	test_size: float = 0.2,
-	val_size: float = 0.2,
-	random_state: int = 42,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, pd.Series]:
-	"""Split data into train, validation, and test sets using stratification.
-	
-	WARNING: This uses sample-level stratification and can cause data leakage
-	(same person in train and test). Use split_data_person_aware() instead.
-	"""
-	X_train_val, X_test, y_train_val, y_test = train_test_split(
-		features,
-		labels,
-		test_size=test_size,
-		stratify=labels,
-		random_state=random_state,
-	)
-
-	val_fraction_of_train_val = val_size / (1.0 - test_size)
-	X_train, X_val, y_train, y_val = train_test_split(
-		X_train_val,
-		y_train_val,
-		test_size=val_fraction_of_train_val,
-		stratify=y_train_val,
-		random_state=random_state,
-	)
-
-	return X_train, X_val, X_test, y_train, y_val, y_test
-
-
 def fit_xgboost(
 	X_train: pd.DataFrame,
 	y_train: pd.Series,
@@ -145,37 +114,16 @@ def fit_tuned_xgboost(
 	X_val: pd.DataFrame,
 	y_val: pd.Series,
 ) -> XGBClassifier:
-	"""Fit a tuned XGBoost classifier with hyperparameters from Bayesian Optimization."""
-	positive_count = float(y_train.sum())
-	negative_count = float(len(y_train) - y_train.sum())
-	scale_pos_weight = negative_count / positive_count if positive_count > 0 else 1.0
+	"""Load the final trained XGBoost model saved by the tuning pipeline."""
+	model_path = Path("tuning_results") / "final_model.pkl"
+	if not model_path.exists():
+		raise FileNotFoundError(
+			f"Final model not found at {model_path}. Run XGBoost/xgboost_tuning.py first."
+		)
 
-	# Tuned hyperparameters from Phase 1-3 optimization
-	# Note: tree_method, eval_metric are fixed configuration choices (not tuned)
-	# early_stopping_rounds is not used since final model trains on combined train+val
-	model = XGBClassifier(
-		n_estimators=1372,
-		learning_rate=0.016256670876862687,
-		max_depth=3,
-		subsample=0.5,
-		colsample_bytree=1,
-		min_child_weight=10,
-		reg_lambda=3.4968153791141336,
-		reg_alpha=0,
-		gamma=5.0,
-		scale_pos_weight=scale_pos_weight,
-		random_state=42,
-		objective="binary:logistic",
-		tree_method="hist",
-		eval_metric="aucpr",
-	)
-
-	model.fit(
-		X_train.to_numpy(),
-		y_train,
-		eval_set=[(X_val.to_numpy(), y_val)],
-		verbose=False,
-	)
+	# The saved model already contains the tuned hyperparameters and fitted trees.
+	# The split arguments are kept in the signature so the call sites do not change.
+	model = joblib_load(model_path)
 	return model
 
 
