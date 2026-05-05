@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import os
+import sys
+
 import pandas as pd
 from sklearn.metrics import accuracy_score, average_precision_score, precision_score, recall_score, roc_auc_score
 from sklearn.model_selection import train_test_split
 from xgboost import XGBClassifier
+
+# Ensure project root imports work when running this file via XGBoost/train_XGBoost.py
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if PROJECT_ROOT not in sys.path:
+	sys.path.insert(0, PROJECT_ROOT)
 
 import data_prep
 from missing_values import prepare_for_xgboost
@@ -126,12 +134,50 @@ def fit_tuned_xgboost(
 	return model
 
 
+def fit_kfold_tuned_xgboost(
+	X_train: pd.DataFrame,
+	y_train: pd.Series,
+	X_val: pd.DataFrame,
+	y_val: pd.Series,
+) -> XGBClassifier:
+	"""Fit a tuned model with best params from K-fold Bayesian optimization."""
+	positive_count = float(y_train.sum())
+	negative_count = float(len(y_train) - y_train.sum())
+	scale_pos_weight = negative_count / positive_count if positive_count > 0 else 1.0
+
+	# Best params from tuning_results_kfold.json (hardcoded by request)
+	model = XGBClassifier(
+		n_estimators=100,
+		learning_rate=0.01,
+		max_depth=3,
+		min_child_weight=10,
+		gamma=0,
+		subsample=0.9708446311740322,
+		colsample_bytree=0.5,
+		reg_lambda=5,
+		reg_alpha=0,
+		scale_pos_weight=scale_pos_weight,
+		random_state=42,
+		n_jobs=-1,
+		tree_method="hist",
+		eval_metric="aucpr",
+	)
+
+	model.fit(
+		X_train.to_numpy(),
+		y_train,
+		eval_set=[(X_val.to_numpy(), y_val)],
+		verbose=False,
+	)
+	return model
+
+
 def score_model(
 	model: XGBClassifier,
 	X: pd.DataFrame,
 	y: pd.Series,
 	split_name: str,
-	threshold: float = 0.5,
+	threshold: float = 0.15,
 ) -> None:
 	"""Print ranking metrics and thresholded classification metrics for a split.
 
@@ -183,6 +229,16 @@ def main() -> None:
 	score_model(tuned_model, X_train, y_train, "Train")
 	score_model(tuned_model, X_val, y_val, "Validation")
 	score_model(tuned_model, X_test, y_test, "Test")
+
+	# K-fold tuned model
+	print("\n" + "="*60)
+	print("K-FOLD TUNED MODEL")
+	print("="*60)
+	kfold_tuned_model = fit_kfold_tuned_xgboost(X_train, y_train, X_val, y_val)
+	print("\nK-Fold Tuned Scores:")
+	score_model(kfold_tuned_model, X_train, y_train, "Train")
+	score_model(kfold_tuned_model, X_val, y_val, "Validation")
+	score_model(kfold_tuned_model, X_test, y_test, "Test")
 
 
 if __name__ == "__main__":
