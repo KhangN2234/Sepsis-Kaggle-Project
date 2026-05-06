@@ -186,3 +186,11 @@ kaggle.json
 /artifacts
 /tuning_results
 /TXST__Project_report_template
+
+report_my_section.tex
+REPORT.md
+project_walkthrough.md
+presentation_notes.md
+
+# CatBoost auto-generated training logs (regenerated on every fit)
+/catboost_info
